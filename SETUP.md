@@ -82,18 +82,16 @@ Add these REST commands to your `configuration.yaml`:
 ```yaml
 rest_command:
   sauna_enter:
-    url: "http://<WINDOWS-PC-IP>:8000/api/presence"
+    url: "http://10.0.0.166:8000/api/presence"
     method: POST
     content_type: "application/json"
     payload: '{"presence": true}'
   sauna_leave:
-    url: "http://<WINDOWS-PC-IP>:8000/api/presence"
+    url: "http://10.0.0.166:8000/api/presence"
     method: POST
     content_type: "application/json"
     payload: '{"presence": false}'
 ```
-
-Replace `<WINDOWS-PC-IP>` with your mini PC's local IP (e.g. `192.168.1.50`).
 Restart Home Assistant to apply.
 
 ### Alternative: Without Home Assistant
