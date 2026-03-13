@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sauna Tracker</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --accent: #e94560;
+    --green: #4ecca3;
+    --yellow: #f5c518;
+    --text: #eee;
+    --muted: #888;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 1rem;
+  }
+  h1 { text-align: center; font-size: 1.4rem; margin-bottom: 1rem; }
+  .phase-badge {
+    display: inline-block;
+    padding: .3rem .8rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: .85rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .phase-idle    { background: var(--muted); color: #000; }
+  .phase-in_sauna { background: var(--accent); }
+  .phase-on_break { background: var(--yellow); color: #000; }
+
+  .timer-display {
+    font-size: 3.5rem;
+    font-weight: 700;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    margin: .5rem 0;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin: .5rem 0 1rem;
+    font-size: .95rem;
+  }
+  .stat-row span { color: var(--muted); }
+  .stat-row strong { color: var(--green); }
+
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1rem;
+    max-width: 540px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .card h2 { font-size: 1rem; margin-bottom: .6rem; color: var(--muted); }
+
+  .intervals { list-style: none; }
+  .intervals li {
+    display: flex;
+    justify-content: space-between;
+    padding: .25rem 0;
+    border-bottom: 1px solid #ffffff10;
+    font-size: .9rem;
+  }
+  .intervals li:last-child { border-bottom: none; }
+  .interval-type { font-weight: 600; }
+  .interval-type.in_sauna { color: var(--accent); }
+  .interval-type.break { color: var(--yellow); }
+
+  /* Simulate buttons */
+  .sim-bar {
+    display: flex;
+    gap: .5rem;
+    justify-content: center;
+    margin-bottom: 1rem;
+  }
+  .sim-bar button {
+    padding: .45rem 1rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: .85rem;
+  }
+  .btn-enter { background: var(--green); color: #000; }
+  .btn-leave { background: var(--accent); color: #fff; }
+
+  /* History */
+  .history-item {
+    padding: .6rem 0;
+    border-bottom: 1px solid #ffffff10;
+    font-size: .88rem;
+  }
+  .history-item:last-child { border-bottom: none; }
+  .history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
+  .history-header:hover { color: var(--green); }
+  .history-details {
+    display: none;
+    margin-top: .4rem;
+    padding-left: .5rem;
+    border-left: 2px solid var(--accent);
+  }
+  .history-details.open { display: block; }
+  .history-date { color: var(--muted); }
+  .delete-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: .8rem;
+    padding: .1rem .4rem;
+  }
+  .delete-btn:hover { color: var(--accent); }
+
+  .empty { color: var(--muted); font-style: italic; font-size: .9rem; }
+
+  @media (max-width: 400px) {
+    .timer-display { font-size: 2.6rem; }
+    .stat-row { flex-direction: column; align-items: center; gap: .3rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Sauna Session Tracker</h1>
+
+<!-- Simulate buttons (useful when no sensor is attached yet) -->
+<div class="sim-bar">
+  <button class="btn-enter" onclick="simulate('enter')">Simulate Enter</button>
+  <button class="btn-leave" onclick="simulate('leave')">Simulate Leave</button>
+</div>
+
+<!-- Live status card -->
+<div class="card" id="live-card">
+  <div style="text-align:center">
+    <span class="phase-badge phase-idle" id="phase-badge">IDLE</span>
+  </div>
+  <div class="timer-display" id="timer">00:00</div>
+  <div class="stat-row">
+    <div><span>Round</span> <strong id="round">—</strong></div>
+    <div><span>Total in sauna</span> <strong id="total-in">00:00</strong></div>
+  </div>
+
+  <h2>Current Session Intervals</h2>
+  <ul class="intervals" id="intervals">
+    <li class="empty">No active session</li>
+  </ul>
+</div>
+
+<!-- Session history -->
+<div class="card">
+  <h2>Session History</h2>
+  <div id="history"><p class="empty">Loading…</p></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function fmt(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function localTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString();
+}
+function localDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString(undefined, {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let currentState = null;
+
+function render(s) {
+  currentState = s;
+  // Phase badge
+  const badge = document.getElementById('phase-badge');
+  badge.className = 'phase-badge phase-' + s.phase;
+  const labels = {idle:'Idle', in_sauna:'In Sauna', on_break:'Break'};
+  badge.textContent = labels[s.phase] || s.phase;
+
+  // Timer
+  document.getElementById('timer').textContent = fmt(s.phase_elapsed);
+
+  // Round & total
+  document.getElementById('round').textContent = s.phase === 'idle' ? '—' : s.round;
+  document.getElementById('total-in').textContent = fmt(s.total_in);
+
+  // Intervals
+  const ul = document.getElementById('intervals');
+  if (s.intervals.length === 0 && s.phase === 'idle') {
+    ul.innerHTML = '<li class="empty">No active session</li>';
+  } else {
+    let html = '';
+    s.intervals.forEach((iv, i) => {
+      const label = iv.type === 'in_sauna' ? `Round ${countRound(s.intervals, i)}` : 'Break';
+      html += `<li>
+        <span class="interval-type ${iv.type}">${label}</span>
+        <span>${fmt(iv.duration)}</span>
+      </li>`;
+    });
+    // Show current phase as a live row
+    if (s.phase === 'in_sauna') {
+      html += `<li>
+        <span class="interval-type in_sauna">Round ${s.round} ⏱</span>
+        <span>${fmt(s.phase_elapsed)}</span>
+      </li>`;
+    } else if (s.phase === 'on_break') {
+      html += `<li>
+        <span class="interval-type break">Break ⏱</span>
+        <span>${fmt(s.phase_elapsed)}</span>
+      </li>`;
+    }
+    ul.innerHTML = html;
+  }
+}
+
+function countRound(intervals, idx) {
+  let c = 0;
+  for (let i = 0; i <= idx; i++) {
+    if (intervals[i].type === 'in_sauna') c++;
+  }
+  return c;
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+let ws;
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onmessage = (e) => render(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+  ws.onerror = () => ws.close();
+}
+connect();
+
+// ---------------------------------------------------------------------------
+// Simulate buttons
+// ---------------------------------------------------------------------------
+async function simulate(action) {
+  await fetch(`/api/simulate/${action}`, {method:'POST'});
+}
+
+// ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+async function loadHistory() {
+  const res = await fetch('/api/sessions');
+  const sessions = await res.json();
+  const div = document.getElementById('history');
+  if (sessions.length === 0) {
+    div.innerHTML = '<p class="empty">No past sessions yet.</p>';
+    return;
+  }
+  div.innerHTML = sessions.map(s => {
+    const intervals = s.intervals || [];
+    const detailHTML = intervals.map((iv, i) => {
+      const label = iv.type === 'in_sauna'
+        ? `Round ${intervals.slice(0,i+1).filter(x=>x.type==='in_sauna').length}`
+        : 'Break';
+      return `<div>${label}: ${fmt(iv.duration)}</div>`;
+    }).join('');
+    return `
+      <div class="history-item">
+        <div class="history-header" onclick="this.nextElementSibling.classList.toggle('open')">
+          <span>
+            <span class="history-date">${localDate(s.started_at)}</span>
+            — <strong>${fmt(s.total_in)}</strong> in sauna
+            (${intervals.filter(x=>x.type==='in_sauna').length} rounds)
+          </span>
+          <button class="delete-btn" title="Delete" onclick="event.stopPropagation();delSession(${s.id})">✕</button>
+        </div>
+        <div class="history-details">${detailHTML || '<em>No intervals</em>'}</div>
+      </div>`;
+  }).join('');
+}
+
+async function delSession(id) {
+  if (!confirm('Delete this session?')) return;
+  await fetch(`/api/sessions/${id}`, {method:'DELETE'});
+  loadHistory();
+}
+
+// Refresh history when a session ends (phase goes to idle)
+let prevPhase = null;
+const origRender = render;
+render = function(s) {
+  origRender(s);
+  if (prevPhase && prevPhase !== 'idle' && s.phase === 'idle') loadHistory();
+  prevPhase = s.phase;
+};
+
+loadHistory();
+</script>
+</body>
+</html>
