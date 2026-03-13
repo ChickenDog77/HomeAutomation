@@ -37,11 +37,26 @@ CREATE TABLE IF NOT EXISTS sessions (
 """
 
 
-async def get_db() -> aiosqlite.Connection:
-    db = await aiosqlite.connect(DB_PATH)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode=WAL")
-    return db
+def get_db():
+    """Return an aiosqlite connection as an async context manager."""
+    db = aiosqlite.connect(DB_PATH)
+    return _DbCtx(db)
+
+
+class _DbCtx:
+    """Thin wrapper so we can set row_factory after connect."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self) -> aiosqlite.Connection:
+        self._db = await self._conn
+        self._db.row_factory = aiosqlite.Row
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        return self._db
+
+    async def __aexit__(self, *exc):
+        await self._db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +108,7 @@ class SessionState:
                 self.intervals = []
                 self.phase = "in_sauna"
                 self.phase_start = now
-                async with await get_db() as db:
+                async with get_db() as db:
                     cur = await db.execute(
                         "INSERT INTO sessions (started_at, intervals) VALUES (?, ?)",
                         (_iso(now), "[]"),
@@ -150,7 +165,7 @@ class SessionState:
         total_in = sum(
             i["duration"] for i in self.intervals if i["type"] == "in_sauna"
         )
-        async with await get_db() as db:
+        async with get_db() as db:
             if close:
                 await db.execute(
                     """UPDATE sessions
@@ -210,7 +225,7 @@ async def ticker():
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.executescript(CREATE_TABLES)
         await db.commit()
     # Recover any session that was left open (e.g. after a crash)
@@ -226,7 +241,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 async def _recover_open_session():
     """If the server restarts while a session is open, close it."""
-    async with await get_db() as db:
+    async with get_db() as db:
         cur = await db.execute(
             "SELECT id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1"
         )
@@ -268,7 +283,7 @@ async def get_state():
 
 @app.get("/api/sessions")
 async def list_sessions(limit: int = 50, offset: int = 0):
-    async with await get_db() as db:
+    async with get_db() as db:
         cur = await db.execute(
             "SELECT * FROM sessions WHERE ended_at IS NOT NULL ORDER BY id DESC LIMIT ? OFFSET ?",
             (limit, offset),
@@ -288,7 +303,7 @@ async def list_sessions(limit: int = 50, offset: int = 0):
 
 @app.get("/api/sessions/{session_id}")
 async def get_session(session_id: int):
-    async with await get_db() as db:
+    async with get_db() as db:
         cur = await db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
         r = await cur.fetchone()
         if not r:
@@ -304,7 +319,7 @@ async def get_session(session_id: int):
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: int):
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         await db.commit()
     return {"ok": True}
