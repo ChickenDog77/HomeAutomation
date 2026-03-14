@@ -129,6 +129,62 @@
 
   .empty { color: var(--muted); font-style: italic; font-size: .9rem; }
 
+  /* Heart Rate Monitor */
+  .hr-card {
+    text-align: center;
+    position: relative;
+  }
+  .hr-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .6rem;
+    margin: .5rem 0;
+  }
+  .hr-bpm {
+    font-size: 3rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+  }
+  .hr-label {
+    font-size: .85rem;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .hr-heart {
+    font-size: 2rem;
+    display: inline-block;
+  }
+  .hr-heart.beating {
+    animation: heartbeat 1s ease-in-out infinite;
+  }
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    15% { transform: scale(1.25); }
+    30% { transform: scale(1); }
+    45% { transform: scale(1.15); }
+  }
+  .btn-hr {
+    padding: .45rem 1rem;
+    border: 2px solid var(--accent);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: .85rem;
+    transition: background .2s, color .2s;
+  }
+  .btn-hr:hover { background: var(--accent); color: #fff; }
+  .btn-hr.connected { border-color: var(--green); color: var(--green); }
+  .btn-hr.connected:hover { background: var(--green); color: #000; }
+  .hr-status {
+    font-size: .8rem;
+    color: var(--muted);
+    margin-top: .4rem;
+  }
+
   @media (max-width: 400px) {
     .timer-display { font-size: 2.6rem; }
     .stat-row { flex-direction: column; align-items: center; gap: .3rem; }
@@ -143,6 +199,18 @@
 <div class="sim-bar">
   <button class="btn-enter" onclick="simulate('enter')">Simulate Enter</button>
   <button class="btn-leave" onclick="simulate('leave')">Simulate Leave</button>
+</div>
+
+<!-- Heart Rate Monitor -->
+<div class="card hr-card">
+  <h2>Heart Rate</h2>
+  <div class="hr-display" id="hr-display" style="display:none">
+    <span class="hr-heart" id="hr-heart">&#x2764;</span>
+    <span class="hr-bpm" id="hr-bpm">--</span>
+    <span class="hr-label">BPM</span>
+  </div>
+  <button class="btn-hr" id="hr-btn" onclick="toggleHR()">Connect HR Monitor</button>
+  <div class="hr-status" id="hr-status"></div>
 </div>
 
 <!-- Live status card -->
@@ -316,6 +384,108 @@ render = function(s) {
 };
 
 loadHistory();
+
+// ---------------------------------------------------------------------------
+// Heart Rate Monitor (Web Bluetooth)
+// ---------------------------------------------------------------------------
+let hrDevice = null;
+let hrCharacteristic = null;
+
+async function toggleHR() {
+  if (hrDevice && hrDevice.gatt.connected) {
+    disconnectHR();
+  } else {
+    await connectHR();
+  }
+}
+
+async function connectHR() {
+  const btn = document.getElementById('hr-btn');
+  const status = document.getElementById('hr-status');
+
+  if (!navigator.bluetooth) {
+    status.textContent = 'Web Bluetooth not supported. Use Chrome over HTTPS or localhost.';
+    return;
+  }
+
+  try {
+    status.textContent = 'Scanning for HR monitors…';
+    btn.disabled = true;
+
+    hrDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: ['heart_rate'] }],
+      optionalServices: ['battery_service']
+    });
+
+    hrDevice.addEventListener('gattserverdisconnected', onHRDisconnected);
+
+    status.textContent = 'Connecting to ' + hrDevice.name + '…';
+    const server = await hrDevice.gatt.connect();
+    const service = await server.getPrimaryService('heart_rate');
+    hrCharacteristic = await service.getCharacteristic('heart_rate_measurement');
+
+    await hrCharacteristic.startNotifications();
+    hrCharacteristic.addEventListener('characteristicvaluechanged', onHRData);
+
+    // Update UI
+    btn.textContent = 'Disconnect ' + (hrDevice.name || 'HR Monitor');
+    btn.classList.add('connected');
+    btn.disabled = false;
+    status.textContent = 'Connected — waiting for data…';
+    document.getElementById('hr-display').style.display = 'flex';
+
+  } catch (err) {
+    btn.disabled = false;
+    if (err.name === 'NotFoundError') {
+      status.textContent = 'No device selected.';
+    } else {
+      status.textContent = 'Error: ' + err.message;
+    }
+  }
+}
+
+function disconnectHR() {
+  if (hrDevice && hrDevice.gatt.connected) {
+    hrDevice.gatt.disconnect();
+  }
+  resetHRUI();
+}
+
+function onHRDisconnected() {
+  resetHRUI();
+  document.getElementById('hr-status').textContent = 'Disconnected. Click to reconnect.';
+}
+
+function resetHRUI() {
+  const btn = document.getElementById('hr-btn');
+  btn.textContent = 'Connect HR Monitor';
+  btn.classList.remove('connected');
+  document.getElementById('hr-heart').classList.remove('beating');
+  document.getElementById('hr-bpm').textContent = '--';
+  document.getElementById('hr-display').style.display = 'none';
+}
+
+function onHRData(event) {
+  const value = event.target.value;
+  const flags = value.getUint8(0);
+  // Bit 0 of flags: 0 = UINT8 BPM, 1 = UINT16 BPM
+  let bpm;
+  if (flags & 0x01) {
+    bpm = value.getUint16(1, true);
+  } else {
+    bpm = value.getUint8(1);
+  }
+
+  document.getElementById('hr-bpm').textContent = bpm;
+  document.getElementById('hr-display').style.display = 'flex';
+  document.getElementById('hr-status').textContent = '';
+
+  const heart = document.getElementById('hr-heart');
+  heart.classList.add('beating');
+  // Scale animation speed roughly to heart rate
+  const duration = Math.max(0.4, 60 / bpm);
+  heart.style.animationDuration = duration.toFixed(2) + 's';
+}
 </script>
 </body>
 </html>
